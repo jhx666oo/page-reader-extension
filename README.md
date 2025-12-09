@@ -48,7 +48,7 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/page-reader-extension.git
+   git clone https://github.com/fql9/page-reader-extension.git
    cd page-reader-extension
    ```
 
@@ -155,7 +155,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📮 Support
 
-If you encounter any issues, please [open an issue](https://github.com/YOUR_USERNAME/page-reader-extension/issues) on GitHub.
+If you encounter any issues, please [open an issue](https://github.com/fql9/page-reader-extension/issues) on GitHub.
 
 ---
 

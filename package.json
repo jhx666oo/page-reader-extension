@@ -45,10 +45,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/page-reader-extension"
+    "url": "https://github.com/fql9/page-reader-extension"
   },
   "bugs": {
-    "url": "https://github.com/user/page-reader-extension/issues"
+    "url": "https://github.com/fql9/page-reader-extension/issues"
   },
-  "homepage": "https://github.com/user/page-reader-extension#readme"
+  "homepage": "https://github.com/fql9/page-reader-extension#readme"
 }
