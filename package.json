@@ -1,0 +1,54 @@
+{
+  "name": "page-reader-extension",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AI-Powered Chrome Extension for Content Extraction and SEO/GEO Blog Generation",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.28",
+    "@types/chrome": "^0.0.287",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  },
+  "keywords": [
+    "chrome-extension",
+    "page-reader",
+    "ai",
+    "content-extraction",
+    "seo",
+    "geo",
+    "blog-generator",
+    "gpt",
+    "claude",
+    "gemini",
+    "web-scraper",
+    "manifest-v3",
+    "react",
+    "typescript",
+    "vite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/page-reader-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/user/page-reader-extension/issues"
+  },
+  "homepage": "https://github.com/user/page-reader-extension#readme"
+}
