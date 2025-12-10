@@ -209,19 +209,32 @@ export async function createVideoTask(
     }
 
     const apiUrl = `${settings.videoBaseUrl}/videos`;
+    
+    // Clean API key - remove any non-ASCII characters and whitespace
+    const cleanApiKey = (settings.videoApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
+    
     console.log('[Video API] ========== VIDEO GENERATION REQUEST ==========');
     console.log('[Video API] URL:', apiUrl);
     console.log('[Video API] Model:', videoConfig.model);
     console.log('[Video API] Prompt length:', prompt.length, 'chars');
     console.log('[Video API] Request body:', JSON.stringify(requestBody, null, 2));
-    console.log('[Video API] API Key (first 10 chars):', settings.videoApiKey?.substring(0, 10) + '...');
+    console.log('[Video API] API Key length:', cleanApiKey.length);
+    console.log('[Video API] API Key valid:', cleanApiKey.length > 0);
+    
+    if (!cleanApiKey) {
+      console.error('[Video API] API Key is empty or invalid after cleaning');
+      return { 
+        result: { type: 'text', status: 'failed', content: prompt, prompt },
+        error: 'Video API Key is empty or contains invalid characters. Please check your Together AI API key in Settings.' 
+      };
+    }
 
     // Together AI video endpoint is /videos
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.videoApiKey}`,
+        'Authorization': `Bearer ${cleanApiKey}`,
       },
       body: JSON.stringify(requestBody),
     });
@@ -317,11 +330,14 @@ export async function pollVideoTask(
   }
 
   try {
+    // Clean API key
+    const cleanApiKey = (settings.videoApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
+    
     // Together AI video polling endpoint
     const response = await fetch(`${settings.videoBaseUrl}/videos/${taskId}`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${settings.videoApiKey}`,
+        'Authorization': `Bearer ${cleanApiKey}`,
       },
     });
 
