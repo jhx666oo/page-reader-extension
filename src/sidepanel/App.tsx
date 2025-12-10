@@ -2,17 +2,41 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { usePageContent } from '@/hooks/usePageContent';
 import { useSettings } from '@/hooks/useSettings';
 import { useAI } from '@/hooks/useAI';
+import { useSession } from '@/hooks/useSession';
 import { PageContent, AVAILABLE_MODELS, ImageInfo, AIConfig, DEFAULT_AI_CONFIG, VideoConfig, DEFAULT_VIDEO_CONFIG, VIDEO_MODELS, VideoModel } from '@/types';
 import { buildSystemPrompt, OUTPUT_LANGUAGES, OUTPUT_FORMATS, REASONING_LEVELS, buildVideoSystemPrompt, VIDEO_OUTPUT_LANGUAGES, VIDEO_STYLES } from '@/utils/templates';
 
 type Step = 'read' | 'edit' | 'config' | 'result';
 type ResultView = 'rendered' | 'raw';
 type ConfigMode = 'text' | 'video';
+type SidePanel = 'sessions' | 'media' | null;
 
 export const App: React.FC = () => {
   const { getPageContent, loading: pageLoading, error: pageError } = usePageContent();
   const { settings, updateSettings, loading: settingsLoading } = useSettings();
   const { sendPrompt, sendVideoRequest, loading: aiLoading, error: aiError, result: aiResult, videoResult, videoPolling, clearResult, stopPolling } = useAI();
+  
+  // Session management
+  const {
+    sessions,
+    activeSession,
+    activeSessionId,
+    isLoading: sessionLoading,
+    createSession,
+    switchSession,
+    deleteSession,
+    renameSession,
+    mediaLibrary,
+    addMediaItem,
+    removeMediaItem,
+    renameMediaItem,
+    clearMediaLibrary,
+    aiConfig: sessionAiConfig,
+    updateAIConfig: updateSessionAIConfig,
+    videoConfig: sessionVideoConfig,
+    updateVideoConfig: updateSessionVideoConfig,
+    updatePageContent: updateSessionPageContent,
+  } = useSession();
 
   const [step, setStep] = useState<Step>('read');
   const [pageContent, setPageContent] = useState<PageContent | null>(null);
@@ -22,18 +46,67 @@ export const App: React.FC = () => {
   const [resultView, setResultView] = useState<ResultView>('rendered');
   const [editTab, setEditTab] = useState<'text' | 'images'>('text');
   
+  // Side panel state
+  const [sidePanel, setSidePanel] = useState<SidePanel>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionName, setEditingSessionName] = useState('');
+  const [editingMediaId, setEditingMediaId] = useState<string | null>(null);
+  const [editingMediaName, setEditingMediaName] = useState('');
+  
   // Config mode: text generation vs video generation
   const [configMode, setConfigMode] = useState<ConfigMode>('text');
   
-  // AI Config State (for text generation)
+  // AI Config State (for text generation) - synced with session
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     ...DEFAULT_AI_CONFIG,
     systemPrompt: buildSystemPrompt('auto', 'markdown', 'medium', false),
   });
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   
-  // Video Config State
+  // Video Config State - synced with session
   const [videoConfig, setVideoConfig] = useState<VideoConfig>(DEFAULT_VIDEO_CONFIG);
+  
+  // Sync local config with session config ONLY when session ID changes (not on every config update)
+  useEffect(() => {
+    if (activeSession && activeSessionId) {
+      setAiConfig(sessionAiConfig);
+      setVideoConfig(sessionVideoConfig);
+      if (activeSession.pageContent) {
+        setPageContent(activeSession.pageContent);
+        setEditedContent(activeSession.pageContent.text);
+      }
+    }
+    // Only depend on activeSessionId - not on config objects to avoid resetting editedContent
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId]);
+  
+  // Update session config when local config changes (debounced to avoid loops)
+  const configUpdateTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  useEffect(() => {
+    if (activeSession && !sessionLoading) {
+      // Debounce config updates to avoid too many writes
+      if (configUpdateTimeoutRef.current) {
+        clearTimeout(configUpdateTimeoutRef.current);
+      }
+      configUpdateTimeoutRef.current = setTimeout(() => {
+        updateSessionAIConfig(aiConfig);
+      }, 500);
+    }
+    return () => {
+      if (configUpdateTimeoutRef.current) {
+        clearTimeout(configUpdateTimeoutRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiConfig]);
+  
+  useEffect(() => {
+    if (activeSession && !sessionLoading) {
+      updateSessionVideoConfig(videoConfig);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoConfig]);
 
   // Build final system prompt when config changes (for text mode)
   const finalSystemPrompt = useMemo(() => {
@@ -113,6 +186,8 @@ export const App: React.FC = () => {
       setPageContent(content);
       setEditedContent(content.text);
       setSelectedImages([]); // 默认不选择任何图片
+      // Save page content to session
+      updateSessionPageContent(content);
       setStep('edit');
     }
   };
@@ -173,12 +248,49 @@ export const App: React.FC = () => {
     
     if (configMode === 'video') {
       // Use video generation
-      await sendVideoRequest(userContent, finalVideoSystemPrompt, videoConfig, settings);
+      const result = await sendVideoRequest(userContent, finalVideoSystemPrompt, videoConfig, settings);
+      
+      // Save to media library if successful (result is VideoGenerationResult directly)
+      if (result && result.status === 'completed') {
+        const mediaType = result.type === 'video' ? 'video' : 'text';
+        addMediaItem({
+          type: mediaType,
+          name: `${mediaType === 'video' ? '🎬' : '📝'} ${new Date().toLocaleString()}`,
+          prompt: result.prompt || userContent.substring(0, 100),
+          content: result.content,
+          videoUrl: result.videoUrl,
+          thumbnailUrl: result.thumbnailUrl,
+          metadata: {
+            model: videoConfig.model,
+            duration: videoConfig.duration,
+            width: videoConfig.width,
+            height: videoConfig.height,
+            style: videoConfig.videoStyle,
+            language: videoConfig.targetLanguage,
+          },
+        });
+      }
     } else {
       // Use text generation
       await sendPrompt(userContent, settings, aiConfig);
     }
     setStep('result');
+  };
+  
+  // Save text result to media library
+  const handleSaveTextToLibrary = () => {
+    if (!aiResult) return;
+    
+    addMediaItem({
+      type: 'text',
+      name: `📝 ${pageContent?.title?.substring(0, 30) || 'Text'} - ${new Date().toLocaleString()}`,
+      prompt: editedContent.substring(0, 200),
+      content: aiResult,
+      metadata: {
+        model: settings.model,
+        language: aiConfig.outputLanguage,
+      },
+    });
   };
 
   const handleReset = () => {
@@ -604,19 +716,259 @@ export const App: React.FC = () => {
             </div>
           <div>
             <h1 className="text-base font-bold text-white">Page Reader</h1>
-            <p className="text-xs text-dark-400">{settings.model}</p>
+            <p className="text-xs text-dark-400 truncate max-w-32" title={activeSession?.name}>
+              {activeSession?.name || settings.model}
+            </p>
           </div>
         </div>
-        <button
-            onClick={() => setShowSettings(!showSettings)}
-          className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-primary-500/20 text-primary-400' : 'text-dark-400 hover:bg-dark-800'}`}
+        <div className="flex items-center gap-1">
+          {/* Sessions Button */}
+          <button
+            onClick={() => setSidePanel(sidePanel === 'sessions' ? null : 'sessions')}
+            className={`p-2 rounded-lg transition-colors ${sidePanel === 'sessions' ? 'bg-blue-500/20 text-blue-400' : 'text-dark-400 hover:bg-dark-800'}`}
+            title="Sessions"
           >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </button>
+          {/* Media Library Button - folder/collection icon */}
+          <button
+            onClick={() => setSidePanel(sidePanel === 'media' ? null : 'media')}
+            className={`p-2 rounded-lg transition-colors relative ${sidePanel === 'media' ? 'bg-purple-500/20 text-purple-400' : 'text-dark-400 hover:bg-dark-800'}`}
+            title="My Library"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            {mediaLibrary.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                {mediaLibrary.length}
+              </span>
+            )}
+          </button>
+          {/* Settings Button */}
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className={`p-2 rounded-lg transition-colors ${showSettings ? 'bg-primary-500/20 text-primary-400' : 'text-dark-400 hover:bg-dark-800'}`}
+            title="Settings"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-        </button>
+          </button>
+        </div>
       </header>
+      
+      {/* Side Panel - Sessions & Media Library */}
+      {sidePanel && (
+        <div className="border-b border-dark-800 bg-dark-900/80 animate-fadeIn">
+          {/* Sessions Panel */}
+          {sidePanel === 'sessions' && (
+            <div className="p-3 space-y-2 max-h-64 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-blue-400">📁 Sessions</h3>
+                <button
+                  onClick={() => createSession()}
+                  className="px-2 py-1 text-xs bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 transition-colors"
+                >
+                  + New
+                </button>
+              </div>
+              {sessions.map(session => (
+                <div
+                  key={session.id}
+                  className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all ${
+                    session.id === activeSessionId 
+                      ? 'bg-blue-500/20 border border-blue-500/50' 
+                      : 'bg-dark-800/50 border border-dark-700/50 hover:bg-dark-800'
+                  }`}
+                >
+                  {editingSessionId === session.id ? (
+                    <input
+                      type="text"
+                      value={editingSessionName}
+                      onChange={(e) => setEditingSessionName(e.target.value)}
+                      onBlur={() => {
+                        if (editingSessionName.trim()) {
+                          renameSession(session.id, editingSessionName.trim());
+                        }
+                        setEditingSessionId(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          if (editingSessionName.trim()) {
+                            renameSession(session.id, editingSessionName.trim());
+                          }
+                          setEditingSessionId(null);
+                        } else if (e.key === 'Escape') {
+                          setEditingSessionId(null);
+                        }
+                      }}
+                      className="flex-1 px-2 py-1 bg-dark-700 border border-dark-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <div 
+                        className="flex-1 min-w-0"
+                        onClick={() => switchSession(session.id)}
+                      >
+                        <p className="text-sm text-white truncate">{session.name}</p>
+                        <p className="text-xs text-dark-500 truncate">
+                          {session.mediaLibrary.length} items • {new Date(session.updatedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingSessionId(session.id);
+                          setEditingSessionName(session.name);
+                        }}
+                        className="p-1 text-dark-400 hover:text-white transition-colors"
+                        title="Rename"
+                      >
+                        ✏️
+                      </button>
+                      {sessions.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm('Delete this session?')) {
+                              deleteSession(session.id);
+                            }
+                          }}
+                          className="p-1 text-dark-400 hover:text-red-400 transition-colors"
+                          title="Delete"
+                        >
+                          🗑️
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* My Library Panel */}
+          {sidePanel === 'media' && (
+            <div className="p-3 space-y-2 max-h-80 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-purple-400">📚 My Library</h3>
+                {mediaLibrary.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Clear all media items?')) {
+                        clearMediaLibrary();
+                      }
+                    }}
+                    className="px-2 py-1 text-xs text-red-400 hover:bg-red-500/20 rounded-lg transition-colors"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+              {mediaLibrary.length === 0 ? (
+                <p className="text-xs text-dark-500 text-center py-4">
+                  No media yet. Generate videos or text to populate your library.
+                </p>
+              ) : (
+                mediaLibrary.map(item => (
+                  <div
+                    key={item.id}
+                    className="flex items-start gap-2 p-2 bg-dark-800/50 border border-dark-700/50 rounded-lg hover:bg-dark-800 transition-all"
+                  >
+                    {/* Thumbnail/Icon */}
+                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                      item.type === 'video' ? 'bg-purple-500/20' : 'bg-green-500/20'
+                    }`}>
+                      {item.type === 'video' ? '🎬' : '📝'}
+                    </div>
+                    
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      {editingMediaId === item.id ? (
+                        <input
+                          type="text"
+                          value={editingMediaName}
+                          onChange={(e) => setEditingMediaName(e.target.value)}
+                          onBlur={() => {
+                            if (editingMediaName.trim()) {
+                              renameMediaItem(item.id, editingMediaName.trim());
+                            }
+                            setEditingMediaId(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              if (editingMediaName.trim()) {
+                                renameMediaItem(item.id, editingMediaName.trim());
+                              }
+                              setEditingMediaId(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingMediaId(null);
+                            }
+                          }}
+                          className="w-full px-2 py-1 bg-dark-700 border border-dark-600 rounded text-white text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                          autoFocus
+                        />
+                      ) : (
+                        <p className="text-sm text-white truncate">{item.name}</p>
+                      )}
+                      <p className="text-xs text-dark-500 truncate">{item.metadata.model}</p>
+                      {item.type === 'video' && item.metadata.duration && (
+                        <p className="text-xs text-purple-400">{item.metadata.duration}s • {item.metadata.width}x{item.metadata.height}</p>
+                      )}
+                    </div>
+                    
+                    {/* Actions */}
+                    <div className="flex flex-col gap-1">
+                      {item.type === 'video' && item.videoUrl && (
+                        <a
+                          href={item.videoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 text-purple-400 hover:bg-purple-500/20 rounded transition-colors"
+                          title="Open Video"
+                        >
+                          ▶️
+                        </a>
+                      )}
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(item.content || item.videoUrl || '');
+                        }}
+                        className="p-1 text-dark-400 hover:text-white transition-colors"
+                        title="Copy"
+                      >
+                        📋
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingMediaId(item.id);
+                          setEditingMediaName(item.name);
+                        }}
+                        className="p-1 text-dark-400 hover:text-white transition-colors"
+                        title="Rename"
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        onClick={() => removeMediaItem(item.id)}
+                        className="p-1 text-dark-400 hover:text-red-400 transition-colors"
+                        title="Delete"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Settings Panel */}
       {showSettings && (
@@ -658,34 +1010,17 @@ export const App: React.FC = () => {
             </div>
           </div>
           
-          {/* Video AI Settings */}
-          <div className="p-3 bg-purple-900/20 rounded-xl border border-purple-700/50 space-y-3">
-            <h4 className="text-xs font-semibold text-purple-400 flex items-center gap-2">
-              🎬 Video AI (Together AI)
+          {/* Video AI Info */}
+          <div className="p-3 bg-purple-900/20 rounded-xl border border-purple-700/50">
+            <h4 className="text-xs font-semibold text-purple-400 flex items-center gap-2 mb-2">
+              🎬 Video Generation
             </h4>
-            <div>
-              <label className="block text-xs text-dark-400 mb-1.5">Together AI API Key</label>
-              <input
-                type="password"
-                value={settings.videoApiKey || ''}
-                onChange={(e) => updateSettings({ videoApiKey: e.target.value })}
-                placeholder="Enter your Together AI API key"
-                className="w-full px-3 py-2 bg-dark-800 border border-purple-700/50 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-              />
-              <p className="text-xs text-dark-500 mt-1">
-                Get your API key at <a href="https://api.together.xyz" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:underline">api.together.xyz</a>
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs text-dark-400 mb-1.5">Video API Base URL</label>
-              <input
-                type="text"
-                value={settings.videoBaseUrl || 'https://api.together.xyz/v1'}
-                onChange={(e) => updateSettings({ videoBaseUrl: e.target.value })}
-                placeholder="https://api.together.xyz/v1"
-                className="w-full px-3 py-2 bg-dark-800 border border-purple-700/50 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
-              />
-            </div>
+            <p className="text-xs text-dark-400">
+              Video generation uses the same POE API key. Select a video model in Step 3 (Video Mode) to generate videos.
+            </p>
+            <p className="text-xs text-dark-500 mt-2">
+              Available video models: Sora, Veo, Runway, Kling, Hailuo, Pika, Luma
+            </p>
           </div>
         </div>
       )}
@@ -1282,34 +1617,55 @@ export const App: React.FC = () => {
               )}
             </div>
             
-            {/* Controls */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex gap-1 bg-dark-800 rounded-lg p-1">
-                <button
-                  onClick={() => setResultView('rendered')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${resultView === 'rendered' ? (configMode === 'video' ? 'bg-purple-500' : 'bg-primary-500') + ' text-white' : 'text-dark-400 hover:text-white'}`}
-                >{configMode === 'video' ? '🎬 Video' : '📊 Rendered'}</button>
-                <button
-                  onClick={() => setResultView('raw')}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${resultView === 'raw' ? (configMode === 'video' ? 'bg-purple-500' : 'bg-primary-500') + ' text-white' : 'text-dark-400 hover:text-white'}`}
-                >📄 {configMode === 'video' ? 'Prompt' : 'Raw'}</button>
-              </div>
-              
-              {(aiResult || videoResult) && (
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => handleCopy(videoResult?.prompt || videoResult?.content || aiResult || '')} 
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-lg"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg> Copy
-                  </button>
-                  {configMode !== 'video' && (
-                    <button onClick={handleDownload} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg> Download
-                    </button>
-                  )}
+            {/* Controls - Responsive layout */}
+            <div className="flex flex-col gap-2 mb-3">
+              {/* View toggle and action buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* View Mode Toggle */}
+                <div className="flex gap-1 bg-dark-800 rounded-lg p-1">
+                  <button
+                    onClick={() => setResultView('rendered')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${resultView === 'rendered' ? (configMode === 'video' ? 'bg-purple-500' : 'bg-primary-500') + ' text-white' : 'text-dark-400 hover:text-white'}`}
+                  >{configMode === 'video' ? '🎬 Video' : '📊 Preview'}</button>
+                  <button
+                    onClick={() => setResultView('raw')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${resultView === 'raw' ? (configMode === 'video' ? 'bg-purple-500' : 'bg-primary-500') + ' text-white' : 'text-dark-400 hover:text-white'}`}
+                  >📄 {configMode === 'video' ? 'Prompt' : 'Source'}</button>
                 </div>
-              )}
+                
+                {/* Action Buttons */}
+                {(aiResult || videoResult) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    <button 
+                      onClick={() => handleCopy(videoResult?.prompt || videoResult?.content || aiResult || '')} 
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-dark-800 hover:bg-dark-700 text-dark-300 rounded-lg whitespace-nowrap"
+                      title="Copy to clipboard"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                      <span className="hidden sm:inline">Copy</span>
+                    </button>
+                    {configMode !== 'video' && aiResult && (
+                      <>
+                        <button 
+                          onClick={handleDownload} 
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg whitespace-nowrap"
+                          title="Download file"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                          <span className="hidden sm:inline">Download</span>
+                        </button>
+                        <button 
+                          onClick={handleSaveTextToLibrary} 
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg whitespace-nowrap"
+                          title="Save to library"
+                        >
+                          📚 <span className="hidden sm:inline">Save</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             
             {aiError && (
@@ -1412,9 +1768,9 @@ export const App: React.FC = () => {
                     </pre>
                     <div className="mt-3 p-3 bg-amber-900/20 border border-amber-700/50 rounded-lg">
                       <p className="text-amber-400 text-xs">
-                        💡 {!settings.videoApiKey 
-                          ? 'Video API Key not configured. Add your Together AI API key in Settings to generate videos directly.'
-                          : 'Copy this prompt and use it with video generation tools, or check your API key and try again.'}
+                        💡 {!settings.apiKey 
+                          ? 'API Key not configured. Add your POE API key in Settings to generate videos.'
+                          : 'Copy this prompt and use it with video generation tools, or check if the selected model supports video generation.'}
                       </p>
                     </div>
                   </div>

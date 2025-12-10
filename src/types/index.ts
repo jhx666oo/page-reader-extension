@@ -1,20 +1,16 @@
 // Settings Types
+// POE uses unified API for all models including video
+// Reference: https://creator.poe.com/docs/poe-api-overview
 export interface Settings {
   apiKey: string;
   baseUrl: string;
   model: string;
-  // Video API settings (Together AI)
-  videoApiKey: string;
-  videoBaseUrl: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   baseUrl: 'https://api.poe.com/v1',
   model: 'GPT-5.1',
-  // Together AI for video generation
-  videoApiKey: '',
-  videoBaseUrl: 'https://api.together.xyz/v1',
 };
 
 // AI Config for request
@@ -34,24 +30,25 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   reasoningEffort: 'medium',
 };
 
-// Video Generation Types (Together AI Models)
-// Reference: https://docs.together.ai/docs/videos-overview
+// Video Generation Types
+// POE uses unified chat/completions API for all models
+// Video models are accessed like any other model through the same API
+// Use "List available models" endpoint to find available video models
+// Reference: https://creator.poe.com/docs/poe-api-overview
 export type VideoModel = 
-  | 'google/veo-3.0-audio'
-  | 'google/veo-3.0' 
-  | 'google/veo-3.0-fast-audio'
-  | 'google/veo-3.0-fast'
-  | 'google/veo-2.0'
-  | 'openai/sora-2'
-  | 'openai/sora-2-pro'
-  | 'minimax/hailuo-02'
-  | 'minimax/video-01-director'
-  | 'kwaivgI/kling-2.1-master'
-  | 'kwaivgI/kling-2.0-master'
-  | 'vidu/vidu-2.0'
-  | 'ByteDance/Seedance-1.0-pro'
-  | 'pixverse/pixverse-v5'
-  | 'Wan-AI/Wan2.2-T2V-A14B';
+  // POE Video Models (check availability via List models API)
+  | 'Sora'
+  | 'Sora-Pro'
+  | 'Veo-2'
+  | 'Veo-3'
+  | 'Runway-Gen3'
+  | 'Kling-Video'
+  | 'Kling-1.5'
+  | 'Hailuo-Video'
+  | 'Pika-Video'
+  | 'Luma-Dream-Machine'
+  // Custom video bot (user can create their own)
+  | string;
 
 export interface VideoModelConfig {
   name: VideoModel;
@@ -67,196 +64,146 @@ export interface VideoModelConfig {
   provider: string;
 }
 
+// POE Video Models
+// Note: Availability depends on POE platform - check with List available models API
+// These are common video models that may be available on POE
 export const VIDEO_MODELS: VideoModelConfig[] = [
-  // Google Veo 3.0 Series
-  {
-    name: 'google/veo-3.0-audio',
-    displayName: 'Google Veo 3.0 + Audio',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: true,
-    description: 'Google\'s best video model with native audio',
-    provider: 'Google',
-  },
-  {
-    name: 'google/veo-3.0',
-    displayName: 'Google Veo 3.0',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'Google\'s flagship video generation model',
-    provider: 'Google',
-  },
-  {
-    name: 'google/veo-3.0-fast-audio',
-    displayName: 'Google Veo 3.0 Fast + Audio',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: true,
-    description: 'Faster Veo 3.0 with audio',
-    provider: 'Google',
-  },
-  {
-    name: 'google/veo-2.0',
-    displayName: 'Google Veo 2.0',
-    maxDuration: 5,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'Google Veo 2.0 video model',
-    provider: 'Google',
-  },
   // OpenAI Sora
   {
-    name: 'openai/sora-2',
-    displayName: 'OpenAI Sora 2',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'OpenAI\'s advanced Sora 2 video model',
-    provider: 'OpenAI',
-  },
-  {
-    name: 'openai/sora-2-pro',
-    displayName: 'OpenAI Sora 2 Pro',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'OpenAI\'s premium Sora 2 model',
-    provider: 'OpenAI',
-  },
-  // MiniMax
-  {
-    name: 'minimax/hailuo-02',
-    displayName: 'MiniMax Hailuo 02',
-    maxDuration: 10,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1366,
-    defaultHeight: 768,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'MiniMax Hailuo 02 - up to 10s video',
-    provider: 'MiniMax',
-  },
-  {
-    name: 'minimax/video-01-director',
-    displayName: 'MiniMax Director',
-    maxDuration: 5,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1366,
-    defaultHeight: 768,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'MiniMax Video Director model',
-    provider: 'MiniMax',
-  },
-  // Kuaishou Kling
-  {
-    name: 'kwaivgI/kling-2.1-master',
-    displayName: 'Kling 2.1 Master',
-    maxDuration: 5,
+    name: 'Sora',
+    displayName: 'Sora',
+    maxDuration: 20,
     minDuration: 5,
     durationStep: 1,
     defaultWidth: 1920,
     defaultHeight: 1080,
     supportsImageReference: true,
     supportsSoundGeneration: false,
-    description: 'Kuaishou\'s Kling 2.1 Master',
+    description: 'OpenAI Sora video generation model',
+    provider: 'OpenAI',
+  },
+  {
+    name: 'Sora-Pro',
+    displayName: 'Sora Pro',
+    maxDuration: 60,
+    minDuration: 5,
+    durationStep: 1,
+    defaultWidth: 1920,
+    defaultHeight: 1080,
+    supportsImageReference: true,
+    supportsSoundGeneration: false,
+    description: 'OpenAI Sora Pro - longer videos',
+    provider: 'OpenAI',
+  },
+  // Google Veo
+  {
+    name: 'Veo-2',
+    displayName: 'Google Veo 2',
+    maxDuration: 8,
+    minDuration: 4,
+    durationStep: 1,
+    defaultWidth: 1280,
+    defaultHeight: 720,
+    supportsImageReference: true,
+    supportsSoundGeneration: false,
+    description: 'Google Veo 2 video generation',
+    provider: 'Google',
+  },
+  {
+    name: 'Veo-3',
+    displayName: 'Google Veo 3',
+    maxDuration: 8,
+    minDuration: 4,
+    durationStep: 1,
+    defaultWidth: 1920,
+    defaultHeight: 1080,
+    supportsImageReference: true,
+    supportsSoundGeneration: true,
+    description: 'Google Veo 3 with audio support',
+    provider: 'Google',
+  },
+  // Runway
+  {
+    name: 'Runway-Gen3',
+    displayName: 'Runway Gen-3 Alpha',
+    maxDuration: 10,
+    minDuration: 4,
+    durationStep: 1,
+    defaultWidth: 1280,
+    defaultHeight: 768,
+    supportsImageReference: true,
+    supportsSoundGeneration: false,
+    description: 'Runway Gen-3 Alpha video model',
+    provider: 'Runway',
+  },
+  // Kuaishou Kling
+  {
+    name: 'Kling-Video',
+    displayName: 'Kling Video',
+    maxDuration: 10,
+    minDuration: 5,
+    durationStep: 1,
+    defaultWidth: 1920,
+    defaultHeight: 1080,
+    supportsImageReference: true,
+    supportsSoundGeneration: false,
+    description: 'Kuaishou Kling video model',
     provider: 'Kuaishou',
   },
   {
-    name: 'kwaivgI/kling-2.0-master',
-    displayName: 'Kling 2.0 Master',
-    maxDuration: 5,
+    name: 'Kling-1.5',
+    displayName: 'Kling 1.5',
+    maxDuration: 10,
     minDuration: 5,
     durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
+    defaultWidth: 1920,
+    defaultHeight: 1080,
     supportsImageReference: true,
     supportsSoundGeneration: false,
-    description: 'Kuaishou\'s Kling 2.0 Master',
+    description: 'Kuaishou Kling 1.5 enhanced model',
     provider: 'Kuaishou',
   },
-  // Vidu
+  // MiniMax Hailuo
   {
-    name: 'vidu/vidu-2.0',
-    displayName: 'Vidu 2.0',
-    maxDuration: 8,
-    minDuration: 5,
+    name: 'Hailuo-Video',
+    displayName: 'Hailuo Video',
+    maxDuration: 6,
+    minDuration: 4,
     durationStep: 1,
     defaultWidth: 1280,
     defaultHeight: 720,
     supportsImageReference: true,
     supportsSoundGeneration: false,
-    description: 'Vidu 2.0 video generation',
-    provider: 'Vidu',
+    description: 'MiniMax Hailuo video model',
+    provider: 'MiniMax',
   },
-  // ByteDance Seedance
+  // Pika Labs
   {
-    name: 'ByteDance/Seedance-1.0-pro',
-    displayName: 'ByteDance Seedance Pro',
+    name: 'Pika-Video',
+    displayName: 'Pika Video',
+    maxDuration: 4,
+    minDuration: 3,
+    durationStep: 1,
+    defaultWidth: 1024,
+    defaultHeight: 576,
+    supportsImageReference: true,
+    supportsSoundGeneration: false,
+    description: 'Pika Labs video generation',
+    provider: 'Pika',
+  },
+  // Luma AI
+  {
+    name: 'Luma-Dream-Machine',
+    displayName: 'Luma Dream Machine',
     maxDuration: 5,
-    minDuration: 5,
+    minDuration: 4,
     durationStep: 1,
-    defaultWidth: 1248,
-    defaultHeight: 704,
+    defaultWidth: 1360,
+    defaultHeight: 752,
     supportsImageReference: true,
     supportsSoundGeneration: false,
-    description: 'ByteDance Seedance 1.0 Pro',
-    provider: 'ByteDance',
-  },
-  // PixVerse
-  {
-    name: 'pixverse/pixverse-v5',
-    displayName: 'PixVerse V5',
-    maxDuration: 5,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: true,
-    supportsSoundGeneration: false,
-    description: 'PixVerse V5 video model',
-    provider: 'PixVerse',
-  },
-  // Wan-AI
-  {
-    name: 'Wan-AI/Wan2.2-T2V-A14B',
-    displayName: 'Wan 2.2 Text-to-Video',
-    maxDuration: 8,
-    minDuration: 5,
-    durationStep: 1,
-    defaultWidth: 1280,
-    defaultHeight: 720,
-    supportsImageReference: false,
-    supportsSoundGeneration: false,
-    description: 'Wan-AI Text-to-Video model',
-    provider: 'Wan-AI',
+    description: 'Luma AI Dream Machine',
+    provider: 'Luma',
   },
 ];
 
@@ -276,13 +223,13 @@ export interface VideoConfig {
 }
 
 export const DEFAULT_VIDEO_CONFIG: VideoConfig = {
-  model: 'google/veo-3.0-audio',
+  model: 'Sora',
   duration: 5,
-  width: 1280,
-  height: 720,
+  width: 1920,
+  height: 1080,
   useImageReference: false,
   referenceImageUrl: '',
-  enableSound: true,
+  enableSound: false,
   brandName: 'XOOBAY',
   brandUrl: 'https://www.xoobay.com/',
   targetLanguage: 'zh-CN',
@@ -290,8 +237,8 @@ export const DEFAULT_VIDEO_CONFIG: VideoConfig = {
   systemPrompt: '',
 };
 
-// Available Models - Latest 2025 Models from Leaderboard
-// Reference: https://artificialanalysis.ai/leaderboards/models
+// Available Models - Latest 2025 Models from POE
+// Reference: https://poe.com (check available models)
 export const AVAILABLE_MODELS = [
   // Top Tier Models
   'Gemini-3-Pro-Preview',
@@ -402,16 +349,77 @@ export interface ChromeMessage {
 }
 
 // Video Generation Result
-// Together AI job statuses: queued, in_progress, completed, failed, cancelled
+// POE returns video URL in message.content (synchronous)
 export interface VideoGenerationResult {
   type: 'video' | 'text' | 'pending';
   status: 'pending' | 'queued' | 'in_progress' | 'processing' | 'completed' | 'failed' | 'cancelled';
-  content: string;        // For text: the text content; For video: the video URL
+  content: string;        // For text: the text content; For video: the raw response
   videoUrl?: string;      // Direct video URL if available
   thumbnailUrl?: string;  // Video thumbnail if available
   duration?: number;      // Video duration in seconds
   prompt?: string;        // The generated prompt that was used
-  taskId?: string;        // Together AI task ID for polling
+  taskId?: string;        // Task ID (if applicable)
   progress?: number;      // Progress percentage (0-100)
   error?: string;         // Error message if failed
+}
+
+// ============================================
+// Session & Media Library Types
+// ============================================
+
+// Media item types in the library
+export type MediaType = 'video' | 'text' | 'image';
+
+// Individual media item in the library
+export interface MediaItem {
+  id: string;
+  type: MediaType;
+  createdAt: number;
+  name: string;              // User-friendly name
+  prompt?: string;           // The prompt used to generate this item
+  content: string;           // For text: the content; For video/image: the URL
+  videoUrl?: string;         // Video URL if type is 'video'
+  thumbnailUrl?: string;     // Thumbnail URL for preview
+  metadata: {
+    model: string;           // Model used to generate
+    duration?: number;       // Video duration in seconds
+    width?: number;          // Video/image width
+    height?: number;         // Video/image height
+    style?: string;          // Video style
+    language?: string;       // Target language
+  };
+}
+
+// Session represents a workspace with its own page content and media library
+export interface Session {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  pageUrl?: string;          // Source page URL
+  pageTitle?: string;        // Source page title
+  pageContent?: PageContent; // Captured page content
+  aiConfig: AIConfig;        // AI configuration for this session
+  videoConfig: VideoConfig;  // Video configuration for this session
+  mediaLibrary: MediaItem[]; // Generated media items
+}
+
+// Default session factory
+export function createDefaultSession(name?: string): Session {
+  const now = Date.now();
+  return {
+    id: `session_${now}_${Math.random().toString(36).substr(2, 9)}`,
+    name: name || `Session ${new Date(now).toLocaleDateString()}`,
+    createdAt: now,
+    updatedAt: now,
+    aiConfig: { ...DEFAULT_AI_CONFIG },
+    videoConfig: { ...DEFAULT_VIDEO_CONFIG },
+    mediaLibrary: [],
+  };
+}
+
+// Session storage state
+export interface SessionState {
+  sessions: Session[];
+  activeSessionId: string | null;
 }

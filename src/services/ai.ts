@@ -21,20 +21,9 @@ interface VideoResponse {
   error?: string;
 }
 
-// Together AI Video API response types
-// Statuses: queued, in_progress, completed, failed, cancelled
-interface TogetherVideoTask {
-  id: string;
-  status: 'queued' | 'in_progress' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
-  output?: {
-    video_url?: string;
-    url?: string;
-  };
-  result?: {
-    url?: string;
-  };
-  error?: string;
-}
+// POE API uses unified chat/completions endpoint for all models including video
+// Reference: https://creator.poe.com/docs/poe-api-overview
+// Video models return video URLs in message.content
 
 export async function sendToAI(
   userContent: string,
@@ -131,8 +120,14 @@ export async function generateVideoPrompt(
   videoSystemPrompt: string,
   settings: Settings
 ): Promise<{ prompt: string; error?: string }> {
+  console.log('[Video Prompt] ========== GENERATING VIDEO PROMPT ==========');
+  console.log('[Video Prompt] Using Text AI to generate video prompt');
+  console.log('[Video Prompt] Text API Base URL:', settings.baseUrl);
+  console.log('[Video Prompt] Model:', settings.model);
+  
   if (!settings.apiKey) {
-    return { prompt: '', error: 'Text API Key not configured' };
+    console.error('[Video Prompt] API Key not configured');
+    return { prompt: '', error: 'API Key not configured. Please add your POE API key in Settings.' };
   }
 
   const promptMessages: AIMessage[] = [
@@ -141,7 +136,10 @@ export async function generateVideoPrompt(
   ];
 
   try {
-    const response = await fetch(`${settings.baseUrl}/chat/completions`, {
+    const textApiUrl = `${settings.baseUrl}/chat/completions`;
+    console.log('[Video Prompt] Calling Text API:', textApiUrl);
+    
+    const response = await fetch(textApiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -154,30 +152,97 @@ export async function generateVideoPrompt(
       }),
     });
 
+    console.log('[Video Prompt] Response status:', response.status, response.statusText);
+    
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: { message: response.statusText } }));
-      return { prompt: '', error: error.error?.message || `Prompt API Error: ${response.status}` };
+      const errorText = await response.text();
+      console.error('[Video Prompt] Error response:', errorText.substring(0, 500));
+      try {
+        const error = JSON.parse(errorText);
+        return { prompt: '', error: error.error?.message || `Prompt API Error: ${response.status}` };
+      } catch {
+        return { prompt: '', error: `Prompt API Error: ${response.status} - ${response.statusText}` };
+      }
     }
 
     const data = await response.json();
     const generatedPrompt = data.choices?.[0]?.message?.content || '';
+    console.log('[Video Prompt] Generated prompt length:', generatedPrompt.length, 'chars');
+    console.log('[Video Prompt] SUCCESS - Video prompt generated');
     return { prompt: generatedPrompt };
   } catch (err) {
+    console.error('[Video Prompt] Exception:', err);
     return { prompt: '', error: String(err) };
   }
 }
 
-// Create video generation task using Together AI API
-// Reference: https://docs.together.ai/docs/videos-overview
+// Parse video URL from POE model response
+// Video models may return URLs in different formats:
+// 1. Direct URL: https://...mp4
+// 2. Markdown: ![video](https://...mp4) or [video](https://...)
+// 3. JSON: {"video_url": "https://..."}
+// 4. Plain text with URL embedded
+function parseVideoUrlFromResponse(content: string): string | null {
+  if (!content) return null;
+  
+  console.log('[Video Parse] Parsing response for video URL...');
+  console.log('[Video Parse] Content length:', content.length, 'chars');
+  console.log('[Video Parse] Content preview:', content.substring(0, 500));
+  
+  // Try to parse as JSON first
+  try {
+    const json = JSON.parse(content);
+    if (json.video_url) return json.video_url;
+    if (json.url) return json.url;
+    if (json.videoUrl) return json.videoUrl;
+    if (json.data?.video_url) return json.data.video_url;
+    if (json.result?.url) return json.result.url;
+  } catch {
+    // Not JSON, continue with other methods
+  }
+  
+  // Try to find video URL patterns
+  const videoUrlPatterns = [
+    // Direct video URLs
+    /https?:\/\/[^\s"'<>]+\.(?:mp4|webm|mov|avi|mkv)(?:\?[^\s"'<>]*)?/gi,
+    // URLs in markdown format
+    /\[.*?\]\((https?:\/\/[^\s)]+\.(?:mp4|webm|mov)(?:\?[^\s)]*)?)\)/gi,
+    // URLs in image/video markdown
+    /!\[.*?\]\((https?:\/\/[^\s)]+)\)/gi,
+    // General HTTPS URLs (fallback)
+    /https?:\/\/[^\s"'<>]+/gi,
+  ];
+  
+  for (const pattern of videoUrlPatterns) {
+    const matches = content.match(pattern);
+    if (matches && matches.length > 0) {
+      // Extract URL from markdown if needed
+      let url = matches[0];
+      const markdownMatch = url.match(/\((https?:\/\/[^)]+)\)/);
+      if (markdownMatch) {
+        url = markdownMatch[1];
+      }
+      console.log('[Video Parse] Found URL:', url);
+      return url;
+    }
+  }
+  
+  console.log('[Video Parse] No video URL found in response');
+  return null;
+}
+
+// Create video using POE Chat API
+// POE uses unified chat/completions endpoint for all models
+// Reference: https://creator.poe.com/docs/poe-api-overview
 export async function createVideoTask(
   prompt: string,
   videoConfig: VideoConfig,
   settings: Settings
 ): Promise<VideoResponse> {
-  if (!settings.videoApiKey) {
+  if (!settings.apiKey) {
     return { 
       result: { type: 'text', status: 'failed', content: prompt, prompt },
-      error: 'Video API Key (Together AI) not configured. Please add it in Settings.' 
+      error: 'API Key not configured. Please add your POE API key in Settings.' 
     };
   }
 
@@ -190,66 +255,83 @@ export async function createVideoTask(
   }
 
   try {
-    // Build request body based on Together AI video API format
-    // Reference: https://docs.together.ai/docs/videos-overview
-    const requestBody: Record<string, unknown> = {
-      model: videoConfig.model,  // Use the model name directly
-      prompt: prompt,
-      width: videoConfig.width || modelConfig.defaultWidth,
-      height: videoConfig.height || modelConfig.defaultHeight,
-      seconds: videoConfig.duration,
+    console.log('[Video API] ========== POE VIDEO GENERATION REQUEST ==========');
+    console.log('[Video API] Using POE Chat Completions API');
+    console.log('[Video API] Base URL:', settings.baseUrl);
+    console.log('[Video API] Video Model:', videoConfig.model);
+    console.log('[Video API] Prompt length:', prompt.length, 'chars');
+    
+    // Build the video generation prompt with parameters
+    // Include video settings in the prompt for the video model
+    let videoPrompt = prompt;
+    
+    // Add video parameters to the prompt
+    const videoParams = [];
+    if (videoConfig.duration) {
+      videoParams.push(`Duration: ${videoConfig.duration} seconds`);
+    }
+    if (videoConfig.width && videoConfig.height) {
+      videoParams.push(`Resolution: ${videoConfig.width}x${videoConfig.height}`);
+      const aspectRatio = videoConfig.width > videoConfig.height ? 'landscape (16:9)' : 
+                          videoConfig.width < videoConfig.height ? 'portrait (9:16)' : 'square (1:1)';
+      videoParams.push(`Aspect ratio: ${aspectRatio}`);
+    }
+    
+    if (videoParams.length > 0) {
+      videoPrompt = `${prompt}\n\n[Video Parameters: ${videoParams.join(', ')}]`;
+    }
+    
+    // Add reference image if configured
+    const messages: AIMessage[] = [];
+    
+    if (videoConfig.useImageReference && videoConfig.referenceImageUrl && modelConfig.supportsImageReference) {
+      // Use multimodal format with image
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: videoPrompt },
+          { 
+            type: 'image_url', 
+            image_url: { url: videoConfig.referenceImageUrl } 
+          }
+        ]
+      });
+      console.log('[Video API] Including reference image:', videoConfig.referenceImageUrl);
+    } else {
+      messages.push({
+        role: 'user',
+        content: videoPrompt
+      });
+    }
+
+    const requestBody = {
+      model: videoConfig.model,
+      messages: messages,
+      temperature: 0.7,
     };
 
-    // Add reference image for models that support it (as frame_images)
-    if (videoConfig.useImageReference && videoConfig.referenceImageUrl && modelConfig.supportsImageReference) {
-      requestBody.frame_images = [{
-        url: videoConfig.referenceImageUrl,
-        frame: 0,  // First frame
-      }];
-    }
-
-    const apiUrl = `${settings.videoBaseUrl}/videos`;
+    console.log('[Video API] Request model:', requestBody.model);
+    console.log('[Video API] Calling POE API:', `${settings.baseUrl}/chat/completions`);
     
-    // Clean API key - remove any non-ASCII characters and whitespace
-    const cleanApiKey = (settings.videoApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
-    
-    console.log('[Video API] ========== VIDEO GENERATION REQUEST ==========');
-    console.log('[Video API] URL:', apiUrl);
-    console.log('[Video API] Model:', videoConfig.model);
-    console.log('[Video API] Prompt length:', prompt.length, 'chars');
-    console.log('[Video API] Request body:', JSON.stringify(requestBody, null, 2));
-    console.log('[Video API] API Key length:', cleanApiKey.length);
-    console.log('[Video API] API Key valid:', cleanApiKey.length > 0);
-    
-    if (!cleanApiKey) {
-      console.error('[Video API] API Key is empty or invalid after cleaning');
-      return { 
-        result: { type: 'text', status: 'failed', content: prompt, prompt },
-        error: 'Video API Key is empty or contains invalid characters. Please check your Together AI API key in Settings.' 
-      };
-    }
-
-    // Together AI video endpoint is /videos
-    const response = await fetch(apiUrl, {
+    const response = await fetch(`${settings.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${cleanApiKey}`,
+        'Authorization': `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify(requestBody),
     });
     
     console.log('[Video API] Response status:', response.status, response.statusText);
-
+    
     const responseText = await response.text();
-    console.log('[Video API] Response status:', response.status);
-    console.log('[Video API] Response:', responseText);
+    console.log('[Video API] Response body:', responseText.substring(0, 1000));
 
     if (!response.ok) {
-      let errorMessage = `Video API Error: ${response.status}`;
+      let errorMessage = `POE API Error: ${response.status}`;
       try {
         const errorData = JSON.parse(responseText);
-        errorMessage = errorData.error?.message || errorData.message || errorData.detail || JSON.stringify(errorData);
+        errorMessage = errorData.error?.message || errorData.message || JSON.stringify(errorData);
       } catch {
         errorMessage = responseText || errorMessage;
       }
@@ -260,52 +342,48 @@ export async function createVideoTask(
       };
     }
 
-    let data: TogetherVideoTask;
+    let data;
     try {
       data = JSON.parse(responseText);
     } catch {
       return { 
         result: { type: 'text', status: 'failed', content: prompt, prompt },
-        error: 'Invalid response from video API' 
+        error: 'Invalid response from POE API' 
       };
     }
-    console.log('[Video API] Task created:', data);
+    
+    const responseContent = data.choices?.[0]?.message?.content || '';
+    console.log('[Video API] Response content:', responseContent.substring(0, 500));
 
-    // Check if video URL is directly returned (synchronous response)
-    const videoUrl = data.output?.video_url || data.output?.url || data.result?.url || (data as unknown as { url?: string }).url;
+    // Try to parse video URL from the response
+    const videoUrl = parseVideoUrlFromResponse(responseContent);
+    
     if (videoUrl) {
+      console.log('[Video API] SUCCESS - Video URL found:', videoUrl);
       return {
         result: {
           type: 'video',
           status: 'completed',
-          content: prompt,
+          content: responseContent,
           videoUrl: videoUrl,
           duration: videoConfig.duration,
           prompt: prompt,
-          taskId: data.id,
           progress: 100,
         }
       };
     }
-
-    // If we have an ID, it's async - return pending status for polling
-    if (data.id) {
-      return {
-        result: {
-          type: 'pending',
-          status: data.status || 'queued',
-          content: prompt,
-          prompt: prompt,
-          taskId: data.id,
-          progress: 0,
-        }
-      };
-    }
-
-    // No video URL and no task ID - unexpected response
-    return { 
-      result: { type: 'text', status: 'failed', content: prompt, prompt },
-      error: 'Unexpected response from video API. Check console for details.' 
+    
+    // No video URL found - return the text content
+    // This might happen if the model doesn't support video or returns text instead
+    console.log('[Video API] No video URL found, returning text response');
+    return {
+      result: {
+        type: 'text',
+        status: 'completed',
+        content: responseContent,
+        prompt: prompt,
+        progress: 100,
+      }
     };
   } catch (err) {
     console.error('[Video API] Exception:', err);
@@ -316,123 +394,60 @@ export async function createVideoTask(
   }
 }
 
-// Poll video task status
-// Together AI job statuses: queued, in_progress, completed, failed, cancelled
+// Poll video task status - Not needed for POE API (synchronous)
+// Kept for API compatibility
 export async function pollVideoTask(
   taskId: string,
-  settings: Settings
+  _settings: Settings // Unused - POE API is synchronous
 ): Promise<VideoResponse> {
-  if (!settings.videoApiKey) {
-    return { 
-      result: { type: 'text', status: 'failed', content: '', taskId },
-      error: 'Video API Key not configured' 
-    };
-  }
-
-  try {
-    // Clean API key
-    const cleanApiKey = (settings.videoApiKey || '').trim().replace(/[^\x20-\x7E]/g, '');
-    
-    // Together AI video polling endpoint
-    const response = await fetch(`${settings.videoBaseUrl}/videos/${taskId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${cleanApiKey}`,
-      },
-    });
-
-    const responseText = await response.text();
-    console.log('[Video API] Poll response:', response.status, responseText);
-
-    if (!response.ok) {
-      return { 
-        result: { type: 'pending', status: 'processing', content: '', taskId },
-        error: `Poll Error: ${response.status}` 
-      };
+  // POE API is synchronous, no polling needed
+  // This function is kept for API compatibility
+  console.log('[Video API] pollVideoTask called but POE API is synchronous');
+  return {
+    result: {
+      type: 'text',
+      status: 'completed',
+      content: 'POE API does not require polling - responses are synchronous',
+      taskId: taskId,
+      progress: 100,
     }
-
-    let data: TogetherVideoTask;
-    try {
-      data = JSON.parse(responseText);
-    } catch {
-      return { 
-        result: { type: 'pending', status: 'processing', content: '', taskId },
-        error: 'Invalid poll response' 
-      };
-    }
-    console.log('[Video API] Poll result:', data);
-
-    // Check for video URL in outputs
-    const videoUrl = data.output?.video_url || data.output?.url || data.result?.url;
-    
-    if (data.status === 'completed' && videoUrl) {
-      return {
-        result: {
-          type: 'video',
-          status: 'completed',
-          content: '',
-          videoUrl: videoUrl,
-          taskId: taskId,
-          progress: 100,
-        }
-      };
-    }
-
-    if (data.status === 'failed' || data.status === 'cancelled') {
-      return {
-        result: {
-          type: 'text',
-          status: 'failed',
-          content: '',
-          taskId: taskId,
-          error: data.error || 'Video generation failed',
-        },
-        error: data.error || 'Video generation failed'
-      };
-    }
-
-    // Map Together AI status to progress
-    let progress = 10;
-    if (data.status === 'queued') progress = 10;
-    else if (data.status === 'in_progress') progress = 50;
-
-    // Still processing
-    return {
-      result: {
-        type: 'pending',
-        status: data.status || 'processing',
-        content: '',
-        taskId: taskId,
-        progress: progress,
-      }
-    };
-  } catch (err) {
-    return { 
-      result: { type: 'pending', status: 'processing', content: '', taskId },
-      error: String(err) 
-    };
-  }
+  };
 }
 
-// Combined function for backwards compatibility
+// Combined function for video generation
+// Step 1: Generate video prompt using text model
+// Step 2: Call video model with the prompt
 export async function generateVideo(
   productDescription: string,
   videoSystemPrompt: string,
   videoConfig: VideoConfig,
   settings: Settings
 ): Promise<VideoResponse> {
-  // Step 1: Generate the video prompt
+  console.log('[generateVideo] ========== VIDEO GENERATION STARTED ==========');
+  console.log('[generateVideo] Step 1: Generating video prompt using Text AI...');
+  
+  // Step 1: Generate the video prompt using text AI
   const promptResult = await generateVideoPrompt(productDescription, videoSystemPrompt, settings);
   
   if (promptResult.error || !promptResult.prompt) {
+    console.error('[generateVideo] Step 1 FAILED:', promptResult.error);
     return {
       result: { type: 'text', status: 'failed', content: '' },
       error: promptResult.error || 'Failed to generate video prompt'
     };
   }
+  
+  console.log('[generateVideo] Step 1 SUCCESS - Prompt generated');
+  console.log('[generateVideo] Step 2: Calling POE Video Model...');
+  console.log('[generateVideo] Video Model:', videoConfig.model);
 
-  // Step 2: Create video task with Together AI
+  // Step 2: Call the video model with the generated prompt
   const videoResult = await createVideoTask(promptResult.prompt, videoConfig, settings);
+  
+  console.log('[generateVideo] Step 2 Result:', videoResult.error ? 'FAILED' : 'SUCCESS');
+  if (videoResult.error) {
+    console.error('[generateVideo] Step 2 Error:', videoResult.error.substring(0, 200));
+  }
   
   // Preserve the generated prompt in the result
   if (videoResult.result) {
