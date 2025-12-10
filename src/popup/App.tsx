@@ -9,7 +9,7 @@ export const App: React.FC = () => {
     }
   };
 
-  return (
+    return (
     <div className="w-[300px] p-6 bg-gradient-dark flex flex-col items-center text-center">
       <div className="w-16 h-16 rounded-2xl gradient-primary flex items-center justify-center mb-4 shadow-lg">
         <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -21,18 +21,18 @@ export const App: React.FC = () => {
       <p className="text-xs text-dark-400 mb-6">Extract & analyze page content with AI</p>
       
       <button
-        onClick={openSidePanel}
+            onClick={openSidePanel}
         className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-primary-500 to-indigo-500 text-white font-medium rounded-xl hover:from-primary-600 hover:to-indigo-600 transition-all shadow-lg"
-      >
+          >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-        </svg>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
         Open Page Reader
       </button>
       
       <p className="text-xs text-dark-500 mt-4">
         Or press <kbd className="px-1.5 py-0.5 bg-dark-800 rounded text-dark-400">Ctrl+Shift+Y</kbd>
-      </p>
+        </p>
     </div>
   );
 };

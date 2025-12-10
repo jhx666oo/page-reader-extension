@@ -22,9 +22,10 @@ interface VideoResponse {
 }
 
 // Together AI Video API response types
+// Statuses: queued, in_progress, completed, failed, cancelled
 interface TogetherVideoTask {
   id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'in_progress' | 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   output?: {
     video_url?: string;
     url?: string;
@@ -167,6 +168,7 @@ export async function generateVideoPrompt(
 }
 
 // Create video generation task using Together AI API
+// Reference: https://docs.together.ai/docs/videos-overview
 export async function createVideoTask(
   prompt: string,
   videoConfig: VideoConfig,
@@ -189,22 +191,27 @@ export async function createVideoTask(
 
   try {
     // Build request body based on Together AI video API format
-    // Reference: https://docs.together.ai/reference/post_v1-video-generations
+    // Reference: https://docs.together.ai/docs/videos-overview
     const requestBody: Record<string, unknown> = {
-      model: modelConfig.apiModelId,
+      model: videoConfig.model,  // Use the model name directly
       prompt: prompt,
-      seconds: videoConfig.duration,  // Together AI uses 'seconds' not 'duration_seconds'
+      width: videoConfig.width || modelConfig.defaultWidth,
+      height: videoConfig.height || modelConfig.defaultHeight,
+      seconds: videoConfig.duration,
     };
 
-    // Add image reference for image-to-video models
+    // Add reference image for models that support it (as frame_images)
     if (videoConfig.useImageReference && videoConfig.referenceImageUrl && modelConfig.supportsImageReference) {
-      requestBody.image_url = videoConfig.referenceImageUrl;
+      requestBody.frame_images = [{
+        url: videoConfig.referenceImageUrl,
+        frame: 0,  // First frame
+      }];
     }
 
-    console.log('[Video API] Creating video task:', requestBody);
+    console.log('[Video API] Creating video task:', JSON.stringify(requestBody, null, 2));
     console.log('[Video API] URL:', `${settings.videoBaseUrl}/videos`);
 
-    // Together AI video endpoint is /videos (not /video/generations)
+    // Together AI video endpoint is /videos
     const response = await fetch(`${settings.videoBaseUrl}/videos`, {
       method: 'POST',
       headers: {
@@ -222,7 +229,7 @@ export async function createVideoTask(
       let errorMessage = `Video API Error: ${response.status}`;
       try {
         const errorData = JSON.parse(responseText);
-        errorMessage = errorData.error?.message || errorData.message || errorData.detail || errorMessage;
+        errorMessage = errorData.error?.message || errorData.message || errorData.detail || JSON.stringify(errorData);
       } catch {
         errorMessage = responseText || errorMessage;
       }
@@ -266,7 +273,7 @@ export async function createVideoTask(
       return {
         result: {
           type: 'pending',
-          status: data.status || 'pending',
+          status: data.status || 'queued',
           content: prompt,
           prompt: prompt,
           taskId: data.id,
@@ -290,6 +297,7 @@ export async function createVideoTask(
 }
 
 // Poll video task status
+// Together AI job statuses: queued, in_progress, completed, failed, cancelled
 export async function pollVideoTask(
   taskId: string,
   settings: Settings
@@ -331,25 +339,23 @@ export async function pollVideoTask(
     }
     console.log('[Video API] Poll result:', data);
 
-    // Check for video URL
-    const videoUrl = data.output?.video_url || data.output?.url || data.result?.url || (data as unknown as { url?: string }).url;
+    // Check for video URL in outputs
+    const videoUrl = data.output?.video_url || data.output?.url || data.result?.url;
     
-    if (data.status === 'completed' || videoUrl) {
-      if (videoUrl) {
-        return {
-          result: {
-            type: 'video',
-            status: 'completed',
-            content: '',
-            videoUrl: videoUrl,
-            taskId: taskId,
-            progress: 100,
-          }
-        };
-      }
+    if (data.status === 'completed' && videoUrl) {
+      return {
+        result: {
+          type: 'video',
+          status: 'completed',
+          content: '',
+          videoUrl: videoUrl,
+          taskId: taskId,
+          progress: 100,
+        }
+      };
     }
 
-    if (data.status === 'failed') {
+    if (data.status === 'failed' || data.status === 'cancelled') {
       return {
         result: {
           type: 'text',
@@ -362,6 +368,11 @@ export async function pollVideoTask(
       };
     }
 
+    // Map Together AI status to progress
+    let progress = 10;
+    if (data.status === 'queued') progress = 10;
+    else if (data.status === 'in_progress') progress = 50;
+
     // Still processing
     return {
       result: {
@@ -369,7 +380,7 @@ export async function pollVideoTask(
         status: data.status || 'processing',
         content: '',
         taskId: taskId,
-        progress: data.status === 'processing' ? 50 : 10,
+        progress: progress,
       }
     };
   } catch (err) {

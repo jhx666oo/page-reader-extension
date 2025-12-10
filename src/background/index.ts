@@ -19,23 +19,23 @@ chrome.runtime.onMessage.addListener((message: ChromeMessage, _sender, sendRespo
 });
 
 async function handleMessage(message: ChromeMessage): Promise<unknown> {
-  switch (message.type) {
+    switch (message.type) {
     case 'GET_SETTINGS': {
-      const settings = await getSettings();
+        const settings = await getSettings();
       return { success: true, data: settings };
     }
 
     case 'SAVE_SETTINGS': {
-      await saveSettings(message.payload as Partial<Settings>);
+        await saveSettings(message.payload as Partial<Settings>);
       return { success: true };
-    }
+        }
 
-    case 'GET_PAGE_CONTENT':
+      case 'GET_PAGE_CONTENT':
     case 'GET_SELECTED_TEXT': {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tabs[0]?.id) {
         return { success: false, error: 'No active tab' };
-      }
+        }
       
       const tabUrl = tabs[0].url || '';
       if (tabUrl.startsWith('chrome://') || tabUrl.startsWith('chrome-extension://')) {
@@ -52,7 +52,7 @@ async function handleMessage(message: ChromeMessage): Promise<unknown> {
 
     default:
       return { success: false, error: 'Unknown message type' };
+    }
   }
-}
 
 console.log('[Background] Page Reader started');

@@ -58,9 +58,9 @@
    ```
 
 3. **Build the extension**
-   ```bash
-   npm run build
-   ```
+```bash
+npm run build
+```
 
 4. **Load in Chrome**
    - Open `chrome://extensions/`
