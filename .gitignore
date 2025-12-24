@@ -30,4 +30,8 @@ npm-debug.log*
 *.tmp
 *.temp
 
+# Build artifacts
+*.crx
+*.zip
+*.pem
 

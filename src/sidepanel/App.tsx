@@ -3,18 +3,29 @@ import { usePageContent } from '@/hooks/usePageContent';
 import { useSettings } from '@/hooks/useSettings';
 import { useAI } from '@/hooks/useAI';
 import { useSession } from '@/hooks/useSession';
-import { PageContent, AVAILABLE_MODELS, ImageInfo, AIConfig, DEFAULT_AI_CONFIG, VideoConfig, DEFAULT_VIDEO_CONFIG, VIDEO_MODELS, VideoModel } from '@/types';
+import { useXoobay } from '@/hooks/useXoobay';
+import { PageContent, AVAILABLE_MODELS, ImageInfo, AIConfig, DEFAULT_AI_CONFIG, VideoConfig, DEFAULT_VIDEO_CONFIG, VIDEO_MODELS, VideoModel, XoobayLanguage } from '@/types';
 import { buildSystemPrompt, OUTPUT_LANGUAGES, OUTPUT_FORMATS, REASONING_LEVELS, buildVideoSystemPrompt, VIDEO_OUTPUT_LANGUAGES, VIDEO_STYLES } from '@/utils/templates';
 
 type Step = 'read' | 'edit' | 'config' | 'result';
 type ResultView = 'rendered' | 'raw';
 type ConfigMode = 'text' | 'video';
 type SidePanel = 'sessions' | 'media' | null;
+type ReadMode = 'page' | 'xoobay';
 
 export const App: React.FC = () => {
   const { getPageContent, loading: pageLoading, error: pageError } = usePageContent();
   const { settings, updateSettings, loading: settingsLoading } = useSettings();
   const { sendPrompt, sendVideoRequest, loading: aiLoading, error: aiError, result: aiResult, videoResult, videoPolling, clearResult, stopPolling } = useAI();
+  const { 
+    loading: xoobayLoading, 
+    error: xoobayError, 
+    products: xoobayProducts, 
+    currentPage: xoobayPage, 
+    totalPages: xoobayTotalPages,
+    searchProducts,
+    loadProductAsPageContent,
+  } = useXoobay();
   
   // Session management
   const {
@@ -39,12 +50,18 @@ export const App: React.FC = () => {
   } = useSession();
 
   const [step, setStep] = useState<Step>('read');
+  const [readMode, setReadMode] = useState<ReadMode>('page');
   const [pageContent, setPageContent] = useState<PageContent | null>(null);
   const [editedContent, setEditedContent] = useState('');
   const [selectedImages, setSelectedImages] = useState<ImageInfo[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [resultView, setResultView] = useState<ResultView>('rendered');
   const [editTab, setEditTab] = useState<'text' | 'images'>('text');
+  
+  // XOOBAY related state
+  const [xoobaySearchTerm, setXoobaySearchTerm] = useState('');
+  const [xoobayLang, setXoobayLang] = useState<XoobayLanguage>('zh_cn');
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   
   // Side panel state
   const [sidePanel, setSidePanel] = useState<SidePanel>(null);
@@ -180,15 +197,70 @@ export const App: React.FC = () => {
     }
   }, [settingsLoading, settings.apiKey]);
 
+  // Auto-load products when switching to XOOBAY mode
+  useEffect(() => {
+    if (readMode === 'xoobay' && xoobayProducts.length === 0 && !xoobayLoading) {
+      searchProducts({ pageNo: 1 }, { lang: xoobayLang }).catch(console.error);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readMode]);
+
   const handleReadPage = async () => {
-    const content = await getPageContent();
-    if (content) {
-      setPageContent(content);
-      setEditedContent(content.text);
-      setSelectedImages([]); // 默认不选择任何图片
-      // Save page content to session
-      updateSessionPageContent(content);
-      setStep('edit');
+    if (readMode === 'xoobay') {
+      // XOOBAY mode - load product
+      if (selectedProductId) {
+        const content = await loadProductAsPageContent(selectedProductId, { lang: xoobayLang });
+        if (content) {
+          setPageContent(content);
+          setEditedContent(content.text);
+          setSelectedImages(content.images || []);
+          updateSessionPageContent(content);
+          setStep('edit');
+        }
+      }
+    } else {
+      // Page mode - extract from current page
+      const content = await getPageContent();
+      if (content) {
+        setPageContent(content);
+        setEditedContent(content.text);
+        setSelectedImages([]); // 默认不选择任何图片
+        // Save page content to session
+        updateSessionPageContent(content);
+        setStep('edit');
+      }
+    }
+  };
+
+  // Handle XOOBAY product search
+  const handleXoobaySearch = async () => {
+    try {
+      await searchProducts(
+        {
+          pageNo: 1,
+          name: xoobaySearchTerm || undefined,
+        },
+        { lang: xoobayLang }
+      );
+    } catch (err) {
+      console.error('Search error:', err);
+    }
+  };
+
+  // Load more products (next page)
+  const handleXoobayLoadMore = async () => {
+    if (xoobayPage < xoobayTotalPages) {
+      try {
+        await searchProducts(
+          {
+            pageNo: xoobayPage + 1,
+            name: xoobaySearchTerm || undefined,
+          },
+          { lang: xoobayLang }
+        );
+      } catch (err) {
+        console.error('Load more error:', err);
+      }
     }
   };
 
@@ -1046,37 +1118,216 @@ export const App: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4">
         {/* Step 1: Read Page */}
         {step === 'read' && (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-20 h-20 rounded-2xl bg-dark-800 flex items-center justify-center mb-6">
-              <svg className="w-10 h-10 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
+          <div className="h-full flex flex-col">
+            {/* Mode Toggle */}
+            <div className="flex gap-1 mb-4 bg-dark-800 rounded-lg p-1">
+              <button
+                onClick={() => setReadMode('page')}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors
+                  ${readMode === 'page' ? 'bg-primary-500 text-white' : 'text-dark-400 hover:text-white'}`}
+              >
+                📄 From Page
+              </button>
+              <button
+                onClick={() => setReadMode('xoobay')}
+                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors
+                  ${readMode === 'xoobay' ? 'bg-emerald-500 text-white' : 'text-dark-400 hover:text-white'}`}
+              >
+                🛍️ From XOOBAY
+              </button>
             </div>
-            <h2 className="text-xl font-semibold text-white mb-2">Read Page Content</h2>
-            <p className="text-dark-400 mb-6 max-w-xs">Extract text and images from the current page</p>
-            
-            {pageError && <p className="text-red-400 text-sm mb-4">{pageError}</p>}
-            
-            <button
-              onClick={handleReadPage}
-              disabled={pageLoading || !settings.apiKey}
-              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-primary-500 to-indigo-500 text-white font-medium rounded-xl disabled:opacity-50"
-            >
-              {pageLoading ? (
-                <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              ) : (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              )}
-              Read Page
-            </button>
-            
-            {!settings.apiKey && (
-              <p className="text-amber-400 text-xs mt-4">Please configure API key in settings first</p>
+
+            {readMode === 'page' ? (
+              /* Page Mode */
+              <div className="flex flex-col items-center justify-center flex-1 text-center">
+                <div className="w-20 h-20 rounded-2xl bg-dark-800 flex items-center justify-center mb-6">
+                  <svg className="w-10 h-10 text-dark-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-white mb-2">Read Page Content</h2>
+                <p className="text-dark-400 mb-6 max-w-xs">Extract text and images from the current page</p>
+                
+                {pageError && <p className="text-red-400 text-sm mb-4">{pageError}</p>}
+                
+                <button
+                  onClick={handleReadPage}
+                  disabled={pageLoading || !settings.apiKey}
+                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-primary-500 to-indigo-500 text-white font-medium rounded-xl disabled:opacity-50"
+                >
+                  {pageLoading ? (
+                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  )}
+                  Read Page
+                </button>
+                
+                {!settings.apiKey && (
+                  <p className="text-amber-400 text-xs mt-4">Please configure API key in settings first</p>
+                )}
+              </div>
+            ) : (
+              /* XOOBAY Mode */
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="space-y-3 mb-4">
+                  {/* Language Selection */}
+                  <div>
+                    <label className="block text-xs text-dark-400 mb-1.5">🌐 Language</label>
+                    <select
+                      value={xoobayLang}
+                      onChange={(e) => {
+                        setXoobayLang(e.target.value as XoobayLanguage);
+                        setSelectedProductId(null);
+                      }}
+                      className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                    >
+                      <option value="zh_cn">中文</option>
+                      <option value="en">English</option>
+                      <option value="zh_hk">繁體中文</option>
+                      <option value="ru">Русский</option>
+                    </select>
+                  </div>
+
+                  {/* Search */}
+                  <div>
+                    <label className="block text-xs text-dark-400 mb-1.5">🔍 Search Products</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={xoobaySearchTerm}
+                        onChange={(e) => setXoobaySearchTerm(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleXoobaySearch()}
+                        placeholder="Product name (optional)"
+                        className="flex-1 px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      />
+                      <button
+                        onClick={handleXoobaySearch}
+                        disabled={xoobayLoading}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg disabled:opacity-50"
+                      >
+                        {xoobayLoading ? (
+                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        ) : (
+                          'Search'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Error Message */}
+                {xoobayError && (
+                  <div className="p-3 bg-red-900/30 border border-red-700/50 rounded-xl mb-3">
+                    <p className="text-red-400 text-sm">{xoobayError}</p>
+                  </div>
+                )}
+
+                {/* Product List */}
+                <div className="flex-1 overflow-y-auto space-y-2 mb-4">
+                  {xoobayProducts.length === 0 && !xoobayLoading ? (
+                    <div className="text-center py-8 text-dark-400">
+                      <p className="text-sm">No products found</p>
+                      <p className="text-xs mt-1">Try searching or loading the first page</p>
+                    </div>
+                  ) : (
+                    xoobayProducts.map((product) => (
+                      <div
+                        key={product.id}
+                        onClick={() => setSelectedProductId(selectedProductId === product.id ? null : product.id)}
+                        className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                          selectedProductId === product.id
+                            ? 'bg-emerald-500/20 border-emerald-500'
+                            : 'bg-dark-800/50 border-dark-700 hover:border-dark-600'
+                        }`}
+                      >
+                        <div className="flex gap-3">
+                          <img
+                            src={product.img_logo}
+                            alt={product.name}
+                            className="w-16 h-16 object-cover rounded-lg bg-dark-900"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect fill="%23334155" width="64" height="64"/><text x="32" y="32" text-anchor="middle" fill="%2394a3b8" font-size="10">No Image</text></svg>';
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-white font-medium truncate">{product.name}</p>
+                            <p className="text-xs text-emerald-400 mt-1">${product.money}</p>
+                            <p className="text-xs text-dark-500 mt-1">ID: {product.id}</p>
+                          </div>
+                          {selectedProductId === product.id && (
+                            <div className="flex items-center">
+                              <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Pagination */}
+                {xoobayTotalPages > 1 && (
+                  <div className="flex items-center justify-between p-3 bg-dark-800/50 rounded-xl mb-4">
+                    <span className="text-xs text-dark-400">
+                      Page {xoobayPage} of {xoobayTotalPages}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => searchProducts({ pageNo: Math.max(1, xoobayPage - 1), name: xoobaySearchTerm || undefined }, { lang: xoobayLang })}
+                        disabled={xoobayPage <= 1 || xoobayLoading}
+                        className="px-3 py-1 text-xs bg-dark-700 hover:bg-dark-600 text-dark-300 rounded-lg disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={handleXoobayLoadMore}
+                        disabled={xoobayPage >= xoobayTotalPages || xoobayLoading}
+                        className="px-3 py-1 text-xs bg-dark-700 hover:bg-dark-600 text-dark-300 rounded-lg disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Load Product Button */}
+                <button
+                  onClick={handleReadPage}
+                  disabled={!selectedProductId || xoobayLoading || pageLoading}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-medium rounded-xl disabled:opacity-50"
+                >
+                  {(xoobayLoading || pageLoading) ? (
+                    <>
+                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Loading Product...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Load Selected Product
+                    </>
+                  )}
+                </button>
+                {!selectedProductId && (
+                  <p className="text-amber-400 text-xs mt-2 text-center">Please select a product first</p>
+                )}
+              </div>
             )}
           </div>
         )}

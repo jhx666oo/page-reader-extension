@@ -423,3 +423,8 @@ export interface SessionState {
   sessions: Session[];
   activeSessionId: string | null;
 }
+
+// ============================================
+// XOOBAY API Types
+// ============================================
+export type XoobayLanguage = 'zh_cn' | 'en' | 'zh_hk' | 'ru';
