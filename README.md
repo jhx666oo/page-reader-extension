@@ -48,7 +48,7 @@
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/fql9/page-reader-extension.git
+   git clone https://github.com/jhx666oo/page-reader-extension.git
    cd page-reader-extension
    ```
 
